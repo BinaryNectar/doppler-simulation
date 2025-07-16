@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Doppler Effect Simulation</title>
+    <style>
+      body {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Import map shim for browsers without native support -->
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <!-- Define all external dependencies in the import map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+      // *** CONSTANTS ***
+
+      // --- Simulation Constants ---
+      const MAX_WAVEFRONTS = 15; // Max number of wavefronts rendered at once
+      const VELOCITY_X = 10;     // Emitter velocity in meters per second
+      const VELOCITY_Y = 0.0;
+      const VELOCITY_Z = 0.0;
+  
+      const WAVEFRONT_RADIUS = 0.1; // Initial scale factor for wavefront spheres
+      const WAVE_EMISSION_INTERVAL = 0.004; // Seconds between wavefront emissions (derived from frequency)
+      const FREQUENCY = 1 / WAVE_EMISSION_INTERVAL; // Emission frequency (Hz)
+      const WAVE_SPEED = 343; // Speed of sound in air (m/s)
+  
+      const SCALE = 100; // Size of the emitter cube in meters
+      const SLOW_DOWN = 200; // Slow motion factor for visual clarity
+
+      
+      // Create the emitter
+      const faceLabels = ["FRONT", "BACK", "TOP", "BOTTOM", "RIGHT", "LEFT"];
+
+      const materials = faceLabels.map(label =>
+        new THREE.MeshBasicMaterial({
+            map: createTextTexture(label),
+            side: THREE.DoubleSide
+        })
+      );
+      const emitter = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        materials
+      );
+
+      // create animation constants
+      const simulatedVelocity = new THREE.Vector3(VELOCITY_X, VELOCITY_Y, VELOCITY_Z); // emitter motion
+
+      // info panel
+      const infoPanel = document.getElementById("info");
+
+      // *** GLOBAL VARIABLES ***
+      let scene, camera, cameraOffset, renderer, controls;
+      let time = 0;
+      let prevTime = performance.now();
+      
+      let wavefronts = [];
+      
+      init();
+
+      // *** Initialization ***
+      function init() {
+        initScene();
+        initCamera();
+        initRenderer();
+        initControls();
+      }
+
+      // *** Scene Setup ***
+      function initScene() {
+        scene = new THREE.Scene();
+        // Set up the scene
+        scene.background = new THREE.Color(0xf0f0f0);
+        // Scale uniformly:
+        emitter.scale.set(SCALE, SCALE, SCALE); // Half the size in all directions
+        scene.add(emitter);
+      }
+
+      // *** Camera Setup ***
+      function initCamera() {
+        camera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        cameraOffset = new THREE.Vector3(0, 0, SCALE*5);
+        camera.position.add(cameraOffset);
+      }
+
+      // *** Renderer Setup ***
+      function initRenderer() {
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        window.addEventListener("resize", () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+      }
+
+      // *** Controls Setup ***
+      function initControls() {
+        controls = new OrbitControls(camera, renderer.domElement);
+      }
+
+      function createTextTexture(label, bgColor = "#ffffff", textColor = "#000000") {
+        const TEXTURE_SIZE = 256;
+        const canvas = document.createElement("canvas");
+        canvas.width = TEXTURE_SIZE;
+        canvas.height = TEXTURE_SIZE;
+        const ctx = canvas.getContext("2d");
+
+        // background
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+
+        // text
+        ctx.fillStyle = textColor;
+        ctx.font = "bold 48px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, TEXTURE_SIZE / 2, TEXTURE_SIZE / 2);
+
+        return new THREE.CanvasTexture(canvas);
+      }
+
+      // Animations Functions
+      
+      // *** Update wavefronts array ***
+      function updateWavefronts(deltaTime) {
+        for (let i = 0; i < wavefronts.length; i++) {
+          let wavefront = wavefronts[i];
+          wavefront.age += deltaTime;
+        
+          // Calculate scale based on age and wave speed (distance = speed × time)
+          const scale = WAVEFRONT_RADIUS + (WAVE_SPEED * wavefront.age);
+
+          wavefront.mesh.scale.set(scale, scale, scale);
+
+          // Move the wavefront backwards in emitter's simulated velocity frame
+          // Since movement is simulated, velocity is thrown in the opposite direction
+          const offset = simulatedVelocity
+            .clone()
+            .multiplyScalar(wavefront.age)
+            .multiplyScalar(-1); 
+          const emitterCenter = new THREE.Vector3();
+          emitter.getWorldPosition(emitterCenter);
+          wavefront.mesh.position.copy(emitterCenter).add(offset);
+        }
+
+        // Remove old wavefront and add new one
+        if (time > WAVE_EMISSION_INTERVAL ) {
+          removeWavefront();
+          addWavefront();
+          time = 0;
+        }
+      }
+
+      // *** Remove the oldest wavefront ***
+      function removeWavefront() {
+        let oldWavefront = wavefronts.length >= MAX_WAVEFRONTS ? wavefronts.shift() : null;
+
+        if (oldWavefront) {
+        scene.remove(oldWavefront.mesh);
+        oldWavefront.mesh.geometry.dispose();
+        oldWavefront.mesh.material.dispose();
+        }
+      }
+
+      // *** Add a new wavefront ***
+      function addWavefront() {
+        const SPHERE_SEGMENTS = 32;
+        const INITIAL_SPHERE_RADIUS = 0.1;
+        const geometry = new THREE.SphereGeometry(INITIAL_SPHERE_RADIUS, 
+          SPHERE_SEGMENTS, 
+          SPHERE_SEGMENTS);
+
+        // Create an array with an RGB color for each vertex
+        const colorArray = new Float32Array(geometry.attributes.position.count * 3);
+        const positions = geometry.attributes.position;
+        const velocityNorm = simulatedVelocity.clone().normalize();
+        
+        for (let i = 0; i < positions.count; i++) {
+        const vertex = new THREE.Vector3().fromBufferAttribute(positions, i).normalize();
+
+        // Dot product: +1 in direction of motion, -1 opposite
+        const shift = vertex.dot(velocityNorm); // range: [-1, 1]
+        
+        // Map shift to a red-blue gradient
+        const blue  = Math.max(0, -shift);  // more blue if in direction of motion
+        const red   = Math.max(0,  shift);  // more red if opposite
+        const green = 0;                    // optional: leave out green for simplicity
+        
+        // Color the wavefront using Doppler-shifted red/blue based on dot product with emitter velocity
+        colorArray[i * 3 + 0] = blue;
+        colorArray[i * 3 + 1] = green;
+        colorArray[i * 3 + 2] = red;
+        }
+
+        geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+
+        let newWavefront = new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.05,
+            depthWrite: false // prevents hiding later objects    
+        })
+        );
+
+        newWavefront.position.copy(emitter.position);
+        wavefronts.push({ mesh: newWavefront, age: 0 });
+        scene.add(newWavefront);
+      }
+
+      // Animate the scene
+      function animate() {
+        requestAnimationFrame(animate);
+
+        const currentTime = performance.now();
+        const deltaTime = (currentTime - prevTime)/1000;
+        prevTime = currentTime;
+
+        // Update Info Panel
+        const speed = simulatedVelocity.length().toFixed(3);
+        infoPanel.innerText = 
+          `Size of box: ${SCALE} m x ${SCALE} m x ${SCALE} m\n` +
+          `Time dilation: ${SLOW_DOWN}x\n` +
+          `Box speed: ${speed} m/s\n` +
+          `Direction vector: (${simulatedVelocity.x.toFixed(2)}, ` +
+                      `${simulatedVelocity.y.toFixed(2)}, ` +
+                      `${simulatedVelocity.z.toFixed(2)})\n`+
+          `Frequency (source): ${FREQUENCY.toFixed(2)} Hz\n` +
+          `Frequency (back): ${(WAVE_SPEED/ (WAVE_SPEED + speed)*FREQUENCY).toFixed(2)} Hz\n` +
+          `Frequency (front): ${(WAVE_SPEED/ (WAVE_SPEED - speed)*FREQUENCY).toFixed(2)} Hz\n`;
+
+
+        // Update wavefronts
+        updateWavefronts(deltaTime);
+
+        controls.update();
+
+        // Render the scene
+        renderer.render(scene, camera);
+        time += deltaTime/SLOW_DOWN;
+      }
+
+      requestAnimationFrame(animate);
+    </script>
+    <div id="info-panel" style="
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.9);
+      font-family: sans-serif;
+      font-size: 14px;
+      border-radius: 4px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.2);
+      z-index: 10;
+      ">
+      <strong>Doppler Simulation</strong><br>
+      <span id="info"></span>
+    </div>
+  </body>
+</html>
