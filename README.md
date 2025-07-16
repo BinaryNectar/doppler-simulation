@@ -28,7 +28,7 @@ Open `index.html` in your browser (preferably via a local HTTP server) to launch
 1. **Clone this repository**
 
    ```bash
-   git clone https://github.com/yourusername/doppler-simulation.git
+   git clone https://github.com/binarynectar/doppler-simulation.git
    cd doppler-simulation
    ```
 
